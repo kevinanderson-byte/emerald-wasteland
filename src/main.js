@@ -13,8 +13,20 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 const IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 if (IS_TOUCH) document.body.classList.add('touch');
 
+function bootError(msg) {
+  const elx = document.getElementById('saveInfo');
+  if (elx) { elx.textContent = 'PROBLEM: ' + msg; elx.style.color = '#ff8a7a'; }
+}
+window.addEventListener('error', e => bootError(e.message || 'script error'));
+window.addEventListener('unhandledrejection', e => bootError((e.reason && e.reason.message) || 'loading failed'));
 const canvas = document.getElementById('c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: !IS_TOUCH, powerPreference: 'high-performance' });
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: !IS_TOUCH, powerPreference: 'high-performance' });
+} catch (e) {
+  bootError('this browser/computer has 3D (WebGL) disabled — try Chrome on your personal PC, not a virtual desktop');
+  throw e;
+}
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, IS_TOUCH ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = !IS_TOUCH;
@@ -74,9 +86,16 @@ const assetsPromise = (async () => {
   env.mapping = THREE.EquirectangularReflectionMapping;
   scene.environment = env;
   const loader = new GLTFLoader();
-  await Promise.all(['Skeleton_Minion', 'Skeleton_Rogue', 'Skeleton_Mage', 'Skeleton_Warrior', 'Rogue_Hooded', 'Barbarian', 'Knight']
-    .map(async n => { ASSETS.models[n] = await loader.loadAsync(`assets/models/${n}.glb`); }));
+  let loaded = 0;
+  const names = ['Skeleton_Minion', 'Skeleton_Rogue', 'Skeleton_Mage', 'Skeleton_Warrior', 'Rogue_Hooded', 'Barbarian', 'Knight'];
+  const progressEl = document.getElementById('loadProgress');
+  await Promise.all(names.map(async n => {
+    ASSETS.models[n] = await loader.loadAsync(`assets/models/${n}.glb`);
+    loaded++;
+    if (progressEl) progressEl.textContent = `LOADING WORLD… ${loaded}/${names.length}`;
+  }));
   ASSETS.ready = true;
+  if (progressEl) progressEl.textContent = 'READY';
   buildNpcVisuals();
   collectEnvMats(scene);
 })();
