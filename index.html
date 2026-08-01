@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Emerald Wasteland</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<style>
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#0d1410; font-family:'Segoe UI', system-ui, sans-serif; -webkit-user-select:none; user-select:none; touch-action:none; }
+  #c { display:block; width:100%; height:100%; }
+  #hud { position:fixed; inset:0; pointer-events:none; }
+  .panel { position:absolute; color:#e8f0e4; text-shadow:0 1px 3px rgba(0,0,0,.9); }
+
+  #crosshair { position:absolute; left:50%; top:50%; width:22px; height:22px; transform:translate(-50%,-50%); transition:transform 70ms; }
+  #crosshair span { position:absolute; background:rgba(220,255,230,.9); box-shadow:0 0 3px rgba(0,0,0,.8); }
+  #crosshair .t { left:50%; top:0; width:2px; height:6px; transform:translateX(-50%); }
+  #crosshair .b { left:50%; bottom:0; width:2px; height:6px; transform:translateX(-50%); }
+  #crosshair .l { top:50%; left:0; height:2px; width:6px; transform:translateY(-50%); }
+  #crosshair .r { top:50%; right:0; height:2px; width:6px; transform:translateY(-50%); }
+  #crosshair.hit { transform:translate(-50%,-50%) scale(1.6) rotate(45deg); }
+  #crosshair.hit span { background:#ff5a4b; }
+
+  #vignette { position:absolute; inset:0; opacity:0; transition:opacity 300ms; background:radial-gradient(ellipse at center, transparent 45%, rgba(190,15,10,.65) 100%); }
+  #focusTint { position:absolute; inset:0; opacity:0; transition:opacity 200ms; background:radial-gradient(ellipse at center, rgba(80,255,170,.05) 30%, rgba(20,120,80,.22) 100%); }
+
+  /* left cluster: health/focus/items */
+  #stats { left:calc(16px + env(safe-area-inset-left)); bottom:calc(16px + env(safe-area-inset-bottom)); }
+  .bar { width:200px; height:12px; background:rgba(0,0,0,.5); border:1px solid rgba(255,255,255,.3); border-radius:3px; overflow:hidden; margin-top:3px; }
+  #hpfill { height:100%; width:100%; background:linear-gradient(90deg,#5f9e4e,#8ed36f); transition:width 140ms; }
+  #hpfill.low { background:linear-gradient(90deg,#c23a2b,#e0663a); }
+  #focfill { height:100%; width:100%; background:linear-gradient(90deg,#2fae9e,#6fe3d0); transition:width 140ms; }
+  .blabel { font-size:10px; letter-spacing:2px; opacity:.85; font-weight:600; margin-top:5px; }
+  #itemchips { margin-top:7px; display:flex; gap:6px; pointer-events:auto; }
+  .chip { background:rgba(10,20,14,.72); border:1px solid rgba(160,220,180,.4); color:#dff0e2; border-radius:5px; padding:4px 8px; font-size:12px; font-weight:600; letter-spacing:1px; }
+  .chip:active { background:rgba(70,140,90,.6); }
+  .chip.dim { opacity:.35; }
+
+  /* right cluster: ammo + weapon */
+  #gunbox { right:calc(18px + env(safe-area-inset-right)); bottom:calc(96px + env(safe-area-inset-bottom)); text-align:right; }
+  #wname { font-size:12px; letter-spacing:3px; font-weight:700; opacity:.85; }
+  #ammo { font-size:34px; font-weight:700; font-variant-numeric:tabular-nums; }
+  #ammo small { font-size:15px; opacity:.7; font-weight:400; }
+  #ammo.reloading { color:#ffb84d; font-size:20px; }
+  #wchips { display:flex; gap:6px; justify-content:flex-end; margin-top:5px; pointer-events:auto; }
+  .wchip { width:34px; height:30px; line-height:30px; text-align:center; background:rgba(10,20,14,.72); border:1px solid rgba(160,220,180,.35); color:#cfe4d2; border-radius:5px; font-size:13px; font-weight:700; }
+  .wchip.on { background:rgba(60,150,95,.75); color:#fff; border-color:#9fe3b4; }
+
+  /* top-left: minimap + tabs + xp */
+  #tl { left:calc(14px + env(safe-area-inset-left)); top:calc(12px + env(safe-area-inset-top)); }
+  #minimap { border-radius:6px; border:1px solid rgba(180,230,195,.35); background:rgba(5,12,8,.6); display:block; }
+  #tabsxp { font-size:12px; margin-top:4px; font-weight:600; letter-spacing:1px; }
+  #tabsxp b { color:#ffd24d; }
+  #xpbar { width:120px; height:5px; background:rgba(0,0,0,.5); border:1px solid rgba(255,255,255,.25); border-radius:2px; overflow:hidden; margin-top:3px; }
+  #xpfill { height:100%; width:0%; background:#b48ef0; }
+  #lvl { font-size:11px; opacity:.85; margin-top:2px; letter-spacing:2px; }
+
+  /* top-center compass + district */
+  #tc { top:calc(10px + env(safe-area-inset-top)); left:50%; transform:translateX(-50%); text-align:center; }
+  #compass { display:block; margin:0 auto; }
+  #district { font-size:11px; letter-spacing:4px; opacity:.85; font-weight:600; margin-top:2px; }
+
+  /* top-right: quest tracker + menu buttons */
+  #tr { right:calc(14px + env(safe-area-inset-right)); top:calc(12px + env(safe-area-inset-top)); text-align:right; max-width:46vw; }
+  #trbtns { display:flex; gap:6px; justify-content:flex-end; pointer-events:auto; margin-bottom:6px; }
+  .sqbtn { width:38px; height:34px; line-height:34px; text-align:center; background:rgba(10,20,14,.72); border:1px solid rgba(160,220,180,.4); color:#dff0e2; border-radius:6px; font-size:15px; font-weight:700; }
+  .sqbtn:active { background:rgba(70,140,90,.6); }
+  #questTrack { font-size:12px; line-height:1.45; background:rgba(5,14,9,.55); border-left:3px solid #ffd24d; padding:6px 9px; border-radius:3px; text-align:left; }
+  #questTrack b { color:#ffd24d; letter-spacing:1px; }
+  #questTrack .obj { opacity:.92; }
+  #questTrack .dist { color:#8fe3b0; font-weight:600; }
+
+  #interact { position:absolute; left:50%; bottom:31%; transform:translateX(-50%); pointer-events:auto; background:rgba(8,22,14,.82); border:1px solid #7fd89b; color:#eafbef; padding:10px 22px; border-radius:8px; font-size:15px; font-weight:700; letter-spacing:1px; box-shadow:0 2px 14px rgba(0,0,0,.6); }
+  #interact:active { background:rgba(60,150,95,.8); }
+  #banner { position:absolute; left:50%; top:26%; transform:translateX(-50%); font-size:min(38px,7vw); font-weight:800; letter-spacing:8px; color:#fff; text-shadow:0 2px 18px rgba(0,0,0,.95); opacity:0; transition:opacity 400ms; white-space:nowrap; }
+  #subbanner { position:absolute; left:50%; top:34%; transform:translateX(-50%); font-size:14px; letter-spacing:2px; color:#cfe8d4; text-shadow:0 1px 6px #000; opacity:0; transition:opacity 400ms; white-space:nowrap; }
+  #floaters { position:absolute; left:50%; top:56%; text-align:center; width:0; }
+  .floater { position:absolute; transform:translateX(-50%); white-space:nowrap; font-weight:700; font-size:15px; color:#ffd24d; text-shadow:0 1px 4px #000; animation:floatup 1.4s forwards; }
+  @keyframes floatup { from { opacity:1; margin-top:0; } to { opacity:0; margin-top:-70px; } }
+
+  /* touch controls */
+  #touchlayer { position:fixed; inset:0; pointer-events:none; display:none; }
+  body.touch #touchlayer { display:block; }
+  #joyBase { position:absolute; width:110px; height:110px; border-radius:50%; border:2px solid rgba(190,240,205,.4); background:rgba(10,25,15,.35); display:none; }
+  #joyThumb { position:absolute; width:48px; height:48px; border-radius:50%; background:rgba(190,240,205,.55); display:none; }
+  #fireBtn { position:absolute; right:calc(20px + env(safe-area-inset-right)); bottom:calc(150px + env(safe-area-inset-bottom)); width:84px; height:84px; border-radius:50%; background:rgba(160,40,30,.55); border:2px solid rgba(255,150,130,.7); color:#fff; font-weight:800; font-size:14px; letter-spacing:2px; pointer-events:auto; text-align:center; line-height:84px; }
+  #fireBtn:active { background:rgba(220,60,40,.75); }
+  #focusBtn { position:absolute; right:calc(118px + env(safe-area-inset-right)); bottom:calc(200px + env(safe-area-inset-bottom)); width:58px; height:58px; border-radius:50%; background:rgba(30,120,105,.55); border:2px solid rgba(120,230,205,.7); color:#eafff8; font-weight:700; font-size:11px; pointer-events:auto; text-align:center; line-height:58px; letter-spacing:1px; }
+  #reloadBtn { position:absolute; right:calc(126px + env(safe-area-inset-right)); bottom:calc(132px + env(safe-area-inset-bottom)); width:52px; height:52px; border-radius:50%; background:rgba(90,90,40,.55); border:2px solid rgba(230,220,120,.6); color:#fffbe0; font-weight:700; font-size:11px; pointer-events:auto; text-align:center; line-height:52px; }
+  body:not(.touch) #fireBtn, body:not(.touch) #focusBtn, body:not(.touch) #reloadBtn { display:none; }
+
+  /* screens */
+  .screen { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(6,12,9,.88); color:#e8f2e6; z-index:10; backdrop-filter:blur(3px); text-align:center; pointer-events:auto; overflow:auto; padding:20px 0; }
+  .screen h1 { font-size:min(50px,9vw); margin:0 0 4px; letter-spacing:10px; font-weight:800; color:#bfe8c8; text-shadow:0 2px 0 #1e5a35, 0 6px 26px rgba(0,0,0,.85); }
+  .screen h2 { font-size:26px; margin:0 0 12px; letter-spacing:4px; color:#ff6b5b; }
+  .screen h3 { font-size:16px; letter-spacing:3px; color:#9fe3b4; margin:16px 0 6px; }
+  .screen p { margin:5px 0; opacity:.87; font-size:14px; line-height:1.6; max-width:640px; }
+  .screen .keys { font-size:12px; opacity:.55; margin-top:14px; }
+  .btn { margin-top:14px; padding:13px 44px; font-size:16px; letter-spacing:3px; font-weight:700; color:#0e1710; background:linear-gradient(180deg,#9fd8a8,#5da86b); border:1px solid #3f7a4d; border-radius:5px; cursor:pointer; box-shadow:0 4px 18px rgba(0,0,0,.6); }
+  .btn:hover, .btn:active { filter:brightness(1.12); }
+  .btn.small { padding:9px 22px; font-size:13px; margin-top:8px; }
+  .btn.ghost { background:transparent; color:#bfe8c8; border:1px solid #4e8a5d; }
+  .btn.danger { background:linear-gradient(180deg,#e0836f,#b04a35); border-color:#7a2f1f; color:#fff; }
+  .hidden { display:none !important; }
+  .tagline { color:#8fb89a; letter-spacing:2px; font-size:13px; }
+  .best { font-size:13px; letter-spacing:2px; color:#ffd24d; margin-top:10px; }
+
+  /* dialog / vendor / perk cards */
+  #dialogBox { position:fixed; left:50%; bottom:8%; transform:translateX(-50%); width:min(560px,92vw); background:rgba(8,18,12,.94); border:1px solid #5da86b; border-radius:10px; padding:16px 20px; color:#e8f2e6; z-index:11; pointer-events:auto; text-align:left; }
+  #dialogBox h4 { margin:0 0 6px; color:#9fe3b4; letter-spacing:2px; font-size:14px; }
+  #dialogBox p { margin:0 0 10px; font-size:14px; line-height:1.55; }
+  #dialogBox .row { display:flex; gap:8px; flex-wrap:wrap; }
+  #vendorList { display:flex; flex-direction:column; gap:6px; max-height:44vh; overflow:auto; margin:8px 0; }
+  .vitem { display:flex; justify-content:space-between; align-items:center; gap:12px; background:rgba(255,255,255,.05); padding:7px 10px; border-radius:6px; font-size:13px; }
+  .vitem button { padding:5px 14px; font-size:12px; margin:0; }
+  .perkrow { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; margin-top:14px; }
+  .perkcard { width:170px; background:rgba(20,40,26,.9); border:1px solid #6fbf80; border-radius:10px; padding:14px 12px; cursor:pointer; }
+  .perkcard:hover, .perkcard:active { background:rgba(50,100,62,.9); }
+  .perkcard b { display:block; color:#ffd24d; letter-spacing:1px; margin-bottom:6px; font-size:14px; }
+  .perkcard span { font-size:12px; opacity:.85; line-height:1.4; }
+  #charwrap { display:flex; gap:26px; align-items:flex-start; flex-wrap:wrap; justify-content:center; }
+  #portrait { border-radius:10px; border:1px solid #4e8a5d; background:#0a140d; }
+  #charstats { text-align:left; font-size:13px; line-height:1.8; min-width:220px; }
+  #charstats b { color:#9fe3b4; }
+  #bigmapwrap { position:relative; }
+  #bigmap { border:1px solid #4e8a5d; border-radius:8px; background:#0a140d; max-width:92vw; max-height:70vh; }
+  #questlog { text-align:left; font-size:13px; max-width:560px; line-height:1.6; }
+  #questlog .qdone { opacity:.45; text-decoration:line-through; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <div id="vignette"></div>
+  <div id="focusTint"></div>
+  <div id="crosshair"><span class="t"></span><span class="b"></span><span class="l"></span><span class="r"></span></div>
+  <div id="tl" class="panel">
+    <canvas id="minimap" width="132" height="132"></canvas>
+    <div id="tabsxp"><b id="tabs">0</b> TABS</div>
+    <div id="xpbar"><div id="xpfill"></div></div>
+    <div id="lvl">LVL 1</div>
+  </div>
+  <div id="tc" class="panel">
+    <canvas id="compass" width="300" height="24"></canvas>
+    <div id="district">CASCADE OUTPOST</div>
+  </div>
+  <div id="tr" class="panel">
+    <div id="trbtns">
+      <div class="sqbtn" id="mapBtn">▦</div>
+      <div class="sqbtn" id="charBtn">☰</div>
+      <div class="sqbtn" id="pauseBtn">Ⅱ</div>
+    </div>
+    <div id="questTrack"></div>
+  </div>
+  <div id="stats" class="panel">
+    <div class="blabel">HEALTH</div><div class="bar"><div id="hpfill"></div></div>
+    <div class="blabel">FOCUS</div><div class="bar"><div id="focfill"></div></div>
+    <div id="itemchips">
+      <div class="chip" id="medChip">MEDKIT ×0</div>
+      <div class="chip" id="shotChip">☕ ×0</div>
+    </div>
+  </div>
+  <div id="gunbox" class="panel">
+    <div id="wname">PISTOL</div>
+    <div id="ammo">12 <small>/ 48</small></div>
+    <div id="wchips"></div>
+  </div>
+  <div id="interact" class="hidden">OPEN</div>
+  <div id="banner"></div>
+  <div id="subbanner"></div>
+  <div id="floaters"></div>
+</div>
+
+<div id="touchlayer">
+  <div id="joyBase"></div><div id="joyThumb"></div>
+  <div id="fireBtn">FIRE</div>
+  <div id="focusBtn">FOCUS</div>
+  <div id="reloadBtn">RELOAD</div>
+</div>
+
+<div id="menu" class="screen">
+  <h1>EMERALD WASTELAND</h1>
+  <p class="tagline">SEATTLE &nbsp;&bull;&nbsp; AFTER THE FALL</p>
+  <p>The rain never stopped. The city did. The Faded roam the ruins —<br>
+  what's left of the Emerald City belongs to them now. Almost.</p>
+  <p id="saveInfo" class="best"></p>
+  <button class="btn" id="continueBtn">CONTINUE</button>
+  <button class="btn ghost" id="newBtn">NEW SURVIVOR</button>
+  <p class="keys" id="keysHelp">WASD move &bull; Mouse aim &bull; Click fire &bull; E interact &bull; R reload &bull; Q focus &bull; 1-5 weapons &bull; H medkit &bull; J espresso &bull; M map &bull; Esc pause</p>
+</div>
+
+<div id="pause" class="screen hidden">
+  <h1>PAUSED</h1>
+  <button class="btn" id="resumeBtn">RESUME</button>
+  <button class="btn ghost small" id="pQuestBtn">QUEST LOG</button>
+  <button class="btn ghost small" id="pCharBtn">CHARACTER</button>
+  <button class="btn ghost small" id="pMapBtn">MAP</button>
+  <button class="btn ghost small" id="pMenuBtn">SAVE &amp; MAIN MENU</button>
+</div>
+
+<div id="charScreen" class="screen hidden">
+  <h3>SURVIVOR</h3>
+  <div id="charwrap">
+    <canvas id="portrait" width="200" height="240"></canvas>
+    <div id="charstats"></div>
+  </div>
+  <button class="btn small" id="charBack">BACK</button>
+</div>
+
+<div id="mapScreen" class="screen hidden">
+  <h3>EMERALD WASTELAND — CITY MAP</h3>
+  <div id="bigmapwrap"><canvas id="bigmap" width="640" height="640"></canvas></div>
+  <button class="btn small" id="mapBack">BACK</button>
+</div>
+
+<div id="questScreen" class="screen hidden">
+  <h3>QUEST LOG</h3>
+  <div id="questlog"></div>
+  <button class="btn small" id="questBack">BACK</button>
+</div>
+
+<div id="perkScreen" class="screen hidden">
+  <h2 style="color:#ffd24d">LEVEL UP</h2>
+  <p>Choose a perk. Choose wisely — the rain keeps falling either way.</p>
+  <div class="perkrow" id="perkRow"></div>
+</div>
+
+<div id="deathScreen" class="screen hidden">
+  <h2>YOU FADED OUT</h2>
+  <p id="deathStats"></p>
+  <p class="tagline">The Outpost crew dragged you back inside the walls.<br>Some of your tabs didn't make the trip.</p>
+  <button class="btn" id="respawnBtn">WAKE UP AT THE OUTPOST</button>
+</div>
+
+<div id="dialogBox" class="hidden">
+  <h4 id="dlgName"></h4>
+  <p id="dlgText"></p>
+  <div class="row" id="dlgBtns"></div>
+  <div id="vendorList" class="hidden"></div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
