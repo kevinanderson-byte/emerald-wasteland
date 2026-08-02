@@ -108,14 +108,28 @@ const assetsPromise = (async () => {
       .map(n => loader.loadAsync(`assets/models/props/${n}/${n}_1k.gltf`)));
     scatterScannedProps(props);
   } catch (e) { console.warn('prop models failed, primitive junk only', e); }
-  try {
-    const fbxLoader = new FBXLoader();
+  const fbxLoader = new FBXLoader();
+  ASSETS.zombies = [];
+  try {   // photoreal Mixamo zombie: mesh + separate animation clips sharing one skeleton
+    const gl = new GLTFLoader();
+    const [meshG, ...animGs] = await Promise.all([
+      gl.loadAsync('assets/models/mixamo/Warzombie_F_Pedroso.glb'),
+      ...['idle', 'walk', 'run', 'attack', 'death', 'scream'].map(n => gl.loadAsync(`assets/models/mixamo/zombie_${n}.glb`)),
+    ]);
+    const names = ['Idle', 'Walk', 'Run', 'Attack', 'Death', 'Scream'];
+    const clips = [];
+    animGs.forEach((gg, i) => { if (gg.animations[0]) { const c = gg.animations[0].clone(); c.name = names[i]; clips.push(c); } });
+    const mesh = meshG.scene;
+    const box = new THREE.Box3().setFromObject(mesh);
+    ASSETS.zombies.push({ scene: mesh, clips, scaleFactor: 1.8 / Math.max(0.001, box.max.y - box.min.y), mixamo: true });
+  } catch (e) { console.warn('mixamo zombie failed', e); }
+  try {   // low-poly variants for crowd variety
     const zsrcs = await Promise.all(['ZombieSmooth', 'Zombie'].map(n => fbxLoader.loadAsync(`assets/models/quaternius/${n}.fbx`)));
-    ASSETS.zombies = zsrcs.map(fx => {
+    for (const fx of zsrcs) {
       const box = new THREE.Box3().setFromObject(fx);
-      return { scene: fx, clips: fx.animations, scaleFactor: 1.75 / Math.max(0.001, box.max.y - box.min.y) };
-    });
-  } catch (e) { console.warn('zombie rigs failed, procedural fallback', e); }
+      ASSETS.zombies.push({ scene: fx, clips: fx.animations, scaleFactor: 1.75 / Math.max(0.001, box.max.y - box.min.y) });
+    }
+  } catch (e) { console.warn('quaternius rigs failed', e); }
   ASSETS.ready = true;
   const progressEl = document.getElementById('loadProgress');
   if (progressEl) progressEl.textContent = 'READY';
@@ -1182,6 +1196,7 @@ let audioCtx = null;
 function ensureAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === 'suspended') audioCtx.resume();
+  initAudioGraph();
 }
 function noiseBuffer(dur) {
   const len = Math.floor(audioCtx.sampleRate * dur);
@@ -1192,7 +1207,7 @@ function noiseBuffer(dur) {
 }
 function sfx(type) {
   if (!audioCtx) return;
-  const t = audioCtx.currentTime, out = audioCtx.destination;
+  const t = audioCtx.currentTime, out = master || audioCtx.destination;
   const noiseHit = (dur, freq, ftype, vol) => {
     const src = audioCtx.createBufferSource(); src.buffer = noiseBuffer(dur);
     const f = audioCtx.createBiquadFilter(); f.type = ftype; f.frequency.value = freq;
@@ -1224,6 +1239,147 @@ function sfx(type) {
   else if (type === 'buy') { tone('triangle', 700, null, 0.08, 0.14); tone('triangle', 940, null, 0.1, 0.12, 0.09); }
   else if (type === 'wave') { [[440, 0], [660, 0.18]].forEach(([f, d]) => tone('triangle', f, null, 0.3, 0.16, d)); }
   else if (type === 'explosion') { noiseHit(0.45, 800, 'lowpass', 0.5); }
+}
+
+/* ============================== AMBIENT AUDIO ============================== */
+let master = null, ambient = null, musicTimer = null;
+let muted = localStorage.getItem('ew_muted') === '1';
+let stepT = 0, heartT = 0, ambThrottle = 0;
+function initAudioGraph() {
+  if (master || !audioCtx) return;
+  master = audioCtx.createGain();
+  master.gain.value = muted ? 0 : 1;
+  master.connect(audioCtx.destination);
+  const mkLoop = (ftype, freq, q) => {
+    const s = audioCtx.createBufferSource();
+    s.buffer = noiseBuffer(4); s.loop = true;
+    const f = audioCtx.createBiquadFilter(); f.type = ftype; f.frequency.value = freq; f.Q.value = q;
+    const g = audioCtx.createGain(); g.gain.value = 0;
+    s.connect(f).connect(g).connect(master);
+    s.start();
+    return { g, f };
+  };
+  ambient = {
+    rain: mkLoop('bandpass', 5200, 0.4),
+    wind: mkLoop('lowpass', 240, 0.6),
+    rumble: mkLoop('lowpass', 90, 0.8),
+    fire: mkLoop('bandpass', 1400, 1.2),
+  };
+  const lfo = audioCtx.createOscillator(); lfo.frequency.value = 0.07;
+  const lfoG = audioCtx.createGain(); lfoG.gain.value = 0.018;
+  lfo.connect(lfoG).connect(ambient.wind.g.gain); lfo.start();
+  startMusic();
+}
+function padNote(freq, dur, vol) {
+  const t = audioCtx.currentTime;
+  for (const det of [1, 1.004]) {
+    const o = audioCtx.createOscillator();
+    o.type = det === 1 ? 'triangle' : 'sine';
+    o.frequency.value = freq * det;
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(vol, t + 3);
+    g.gain.linearRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(master);
+    o.start(t); o.stop(t + dur + 0.1);
+  }
+}
+function pluckNote(freq, vol) {
+  const t = audioCtx.currentTime + Math.random() * 3;
+  const o = audioCtx.createOscillator(); o.type = 'sine'; o.frequency.value = freq;
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
+  o.connect(g).connect(master); o.start(t); o.stop(t + 2.3);
+}
+const CHORDS = [
+  [110.0, 130.81, 164.81],
+  [87.31, 110.0, 174.61],
+  [82.41, 123.47, 164.81],
+  [98.0, 116.54, 146.83],
+];
+let chordStep = 0;
+function startMusic() {
+  if (musicTimer) return;
+  const play = () => {
+    if (!audioCtx || muted || document.hidden) return;
+    const menu = state.mode === 'menu';
+    const chord = CHORDS[chordStep++ % CHORDS.length];
+    const oct = state.night && !menu ? 0.5 : 1;
+    for (const f of chord) padNote(f * oct, 9.5, menu ? 0.045 : 0.03);
+    if (!menu && Math.random() < 0.4) pluckNote(chord[Math.floor(Math.random() * chord.length)] * 2, 0.05);
+  };
+  play();
+  musicTimer = setInterval(play, 8000);
+}
+function stepSfx(sprinting) {
+  if (!audioCtx || !master) return;
+  const t = audioCtx.currentTime;
+  const s = audioCtx.createBufferSource(); s.buffer = noiseBuffer(0.07);
+  const f = audioCtx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 380 + Math.random() * 260;
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime((sprinting ? 0.075 : 0.05) + Math.random() * 0.02, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+  s.connect(f).connect(g).connect(master); s.start(t);
+}
+function groanAt(x, z) {
+  if (!audioCtx || !master) return;
+  const dx = x - yawObj.position.x, dz = z - yawObj.position.z;
+  const dist = Math.hypot(dx, dz);
+  const ang = Math.atan2(-dx, -dz) - yaw;
+  const pan = Math.max(-1, Math.min(1, -Math.sin(ang)));
+  const t = audioCtx.currentTime;
+  const o = audioCtx.createOscillator(); o.type = 'sawtooth';
+  o.frequency.setValueAtTime(75 + Math.random() * 65, t);
+  o.frequency.exponentialRampToValueAtTime(42, t + 0.65);
+  const g = audioCtx.createGain();
+  const vol = 0.17 * Math.max(0.12, 1 - dist / 45);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + 0.16);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.75);
+  let node = g;
+  if (audioCtx.createStereoPanner) { const p = audioCtx.createStereoPanner(); p.pan.value = pan; g.connect(p); node = p; }
+  o.connect(g); node.connect(master);
+  o.start(t); o.stop(t + 0.8);
+}
+function thunderSfx() {
+  if (!audioCtx || !master) return;
+  const t = audioCtx.currentTime + 0.4 + Math.random() * 1.4;
+  const s = audioCtx.createBufferSource(); s.buffer = noiseBuffer(3);
+  const f = audioCtx.createBiquadFilter(); f.type = 'lowpass';
+  f.frequency.setValueAtTime(320, t); f.frequency.exponentialRampToValueAtTime(55, t + 2.6);
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(0.45, t + 0.09);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 2.9);
+  s.connect(f).connect(g).connect(master);
+  s.start(t); s.stop(t + 3);
+}
+function heartThump() {
+  if (!audioCtx || !master) return;
+  const t = audioCtx.currentTime;
+  for (const [dt, v] of [[0, 0.22], [0.17, 0.14]]) {
+    const o = audioCtx.createOscillator(); o.type = 'sine'; o.frequency.value = 52;
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(v, t + dt);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dt + 0.14);
+    o.connect(g).connect(master); o.start(t + dt); o.stop(t + dt + 0.16);
+  }
+}
+function updateAmbient(dt) {
+  if (!ambient || !audioCtx) return;
+  if (state.focusOn) { heartT -= dt; if (heartT <= 0) { heartT = 0.85; heartThump(); } }
+  ambThrottle += dt;
+  if (ambThrottle < 0.25) return;
+  ambThrottle = 0;
+  const t = audioCtx.currentTime;
+  const inGame = state.mode !== 'menu';
+  ambient.rain.g.gain.setTargetAtTime(inGame ? 0.05 : 0.028, t, 0.6);
+  ambient.wind.g.gain.setTargetAtTime(state.night ? 0.085 : 0.045, t, 0.9);
+  ambient.rumble.g.gain.setTargetAtTime(state.night ? 0.05 : 0.02, t, 1.2);
+  const fd = Math.hypot(yawObj.position.x - OUTPOST.x, yawObj.position.z - OUTPOST.z);
+  ambient.fire.g.gain.setTargetAtTime(inGame ? Math.max(0, 0.07 * (1 - fd / 22)) : 0, t, 0.4);
+  ambient.fire.f.frequency.value = 900 + Math.random() * 1400;
 }
 
 /* ============================== WEAPONS ============================== */
@@ -1386,7 +1542,8 @@ function makeZombie(type, x, z, opts = {}) {
   if (!ASSETS.zombies || !ASSETS.zombies.length) return makeZombieLegacy(type, x, z, opts);
   const T = ZTYPES[type];
   const hair = HAIR_COLORS[Math.floor(Math.random() * HAIR_COLORS.length)];
-  const src = ASSETS.zombies[Math.floor(Math.random() * ASSETS.zombies.length)];
+  const mixamoSrc = ASSETS.zombies.find(s => s.mixamo);
+  const src = mixamoSrc || ASSETS.zombies[Math.floor(Math.random() * ASSETS.zombies.length)];
   const obj = SkeletonUtils.clone(src.scene);
   obj.scale.setScalar(src.scaleFactor);
   obj.traverse(o => {
@@ -1394,17 +1551,24 @@ function makeZombie(type, x, z, opts = {}) {
       o.castShadow = !IS_TOUCH;
       o.frustumCulled = false;
       o.material = o.material.clone();
-      if (o.material.color) o.material.color.multiply(new THREE.Color(ZTONE[type]));
+      if (o.material.color && !src.mixamo) o.material.color.multiply(new THREE.Color(ZTONE[type]));
+      if (src.mixamo && o.material.color && type === 'brute') o.material.color.multiplyScalar(0.9);
     }
   });
   const g = new THREE.Group();
   g.add(obj);
   const mixer = new THREE.AnimationMixer(obj);
-  const clip = n => src.clips.find(c => c.name.endsWith(n));
-  const idleA = mixer.clipAction(clip('ZombieIdle'));
-  const moveA = mixer.clipAction(clip(type === 'sprinter' ? 'ZombieRun' : 'ZombieWalk'));
-  const attackA = mixer.clipAction(clip('ZombieBite'));
+  const pick = (...names) => {
+    for (const n of names) { const c = src.clips.find(cc => cc.name === n || cc.name.endsWith(n)); if (c) return c; }
+    return src.clips[0];
+  };
+  const idleA = mixer.clipAction(pick('Idle', 'ZombieIdle'));
+  const moveA = mixer.clipAction(type === 'sprinter' ? pick('Run', 'ZombieRun') : pick('Walk', 'ZombieWalk'));
+  const attackA = mixer.clipAction(pick('Attack', 'ZombieBite'));
   attackA.setLoop(THREE.LoopOnce);
+  const deathClip = src.clips.find(c => c.name === 'Death');
+  const deathA = deathClip ? mixer.clipAction(deathClip) : null;
+  if (deathA) { deathA.setLoop(THREE.LoopOnce); deathA.clampWhenFinished = true; }
   idleA.play();
   mixer.update(Math.random() * 0.8);
   // neon hair anchored above the head bone
@@ -1415,7 +1579,7 @@ function makeZombie(type, x, z, opts = {}) {
   if (headBone) headBone.getWorldPosition(hv);
   const hairGrp = new THREE.Group();
   const hairM = new THREE.MeshStandardMaterial({ color: hair, roughness: 0.55, emissive: hair, emissiveIntensity: 0.8 });
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < (src.mixamo ? 0 : 5); i++) {
     const fin = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.2 + (2 - Math.abs(i - 2)) * 0.07, 5), hairM);
     fin.position.set(0, (2 - Math.abs(i - 2)) * 0.02, -0.12 + i * 0.06);
     fin.rotation.x = (i - 2) * 0.3;
@@ -1423,7 +1587,9 @@ function makeZombie(type, x, z, opts = {}) {
   }
   hairGrp.position.set(hv.x, hv.y + 0.1, hv.z);
   g.add(hairGrp);
+
   g.scale.setScalar(T.scale * (0.95 + Math.random() * 0.1));
+  if (type === 'sprinter') g.scale.y *= 1.04;
   g.position.set(x, 0, z);
   scene.add(g);
   const bodyHit = new THREE.Mesh(new THREE.BoxGeometry(0.66, 1.45, 0.6), proxyMat);
@@ -1431,7 +1597,7 @@ function makeZombie(type, x, z, opts = {}) {
   const headHit = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.45, 0.4), proxyMat);
   headHit.position.y = Math.max(1.45, hv.y - 0.02); g.add(headHit);
   const zb = {
-    g, obj, mixer, idleA, moveA, attackA, animState: 'idle', animLockT: 0,
+    g, obj, mixer, idleA, moveA, attackA, deathA, animState: 'idle', animLockT: 0,
     type, hp: opts.hp || T.hp * (1 + (state.level - 1) * 0.06), maxHp: T.hp,
     speed: T.speed * (0.9 + Math.random() * 0.25) * (state.night ? 1.2 : 1),
     dmg: T.dmg, atkRate: T.atkRate, atkT: 1 + Math.random(),
@@ -1492,8 +1658,14 @@ function killZombie(zb) {
   state.focus = Math.min(stat.focusMax(), state.focus + 14);
   if (Math.random() < 0.3) { const amt = Math.round((2 + Math.random() * 5) * stat.lootMul()); state.tabs += amt; floater('+' + amt + ' TABS'); }
   sfx('zdie');
-  const g = zb.g;
-  effects.push({ obj: g, life: 0, ttl: 0.8, update(dt, k) { g.rotation.x = -k * Math.PI / 2; g.position.y = -k * 0.2; } });
+  if (zb.deathA) {
+    zb.idleA.fadeOut(0.1); zb.moveA.fadeOut(0.1); zb.attackA.fadeOut(0.1);
+    zb.deathA.reset().play();
+    effects.push({ obj: zb.g, life: 0, ttl: 3.2, update(dt2) { zb.mixer.update(dt2); } });
+  } else {
+    const g = zb.g;
+    effects.push({ obj: g, life: 0, ttl: 0.8, update(dt, k) { g.rotation.x = -k * Math.PI / 2; g.position.y = -k * 0.2; } });
+  }
   zombies.splice(zombies.indexOf(zb), 1);
   if (state.quest.stage === 1) questEvent('kill', zb);
   if (state.job && state.job.type === 'bounty') { state.job.done++; updateQuestHud(); if (state.job.done >= state.job.count) completeJobStage(); }
@@ -1532,7 +1704,7 @@ function updateZombies(dt) {
     if (dist > 130) { scene.remove(zb.g); zombies.splice(zombies.indexOf(zb), 1); continue; }
     if (!zb.aggro && dist < (state.night ? 34 : 24)) zb.aggro = true;
     zb.growlT -= dt;
-    if (zb.aggro && zb.growlT <= 0 && dist < 30) { zb.growlT = 4 + Math.random() * 5; sfx('growl'); }
+    if (zb.aggro && zb.growlT <= 0 && dist < 30) { zb.growlT = 4 + Math.random() * 5; groanAt(zp.x, zp.z); }
     let vx = 0, vz = 0;
     if (zb.aggro) {
       const inOutpost = Math.hypot(zp.x + dx / dist * 2 - OUTPOST.x, zp.z + dz / dist * 2 - OUTPOST.z) < OUTPOST.r;
@@ -2572,6 +2744,13 @@ el('pQuestBtn').onclick = () => showScreen('questScreen');
 el('pCharBtn').onclick = () => showScreen('charScreen');
 el('pMapBtn').onclick = () => showScreen('mapScreen');
 el('pMenuBtn').onclick = () => { saveGame(); location.reload(); };
+el('muteBtn').textContent = 'SOUND: ' + (muted ? 'OFF' : 'ON');
+el('muteBtn').onclick = () => {
+  muted = !muted;
+  localStorage.setItem('ew_muted', muted ? '1' : '0');
+  if (master) master.gain.setTargetAtTime(muted ? 0 : 1, audioCtx.currentTime, 0.1);
+  el('muteBtn').textContent = 'SOUND: ' + (muted ? 'OFF' : 'ON');
+};
 el('charBack').onclick = () => showScreen('pause');
 el('mapBack').onclick = () => showScreen('pause');
 el('questBack').onclick = () => showScreen('pause');
@@ -2773,6 +2952,8 @@ function updatePlayer(dt) {
   pitchObj.rotation.x = pitch;
 
   const moving = Math.hypot(vel.x, vel.z) > 1 && onGround;
+  stepT -= dt;
+  if (moving && stepT <= 0) { stepT = sprint ? 0.3 : 0.44; stepSfx(sprint); }
   const bob = moving ? Math.sin(state.time * (sprint ? 13 : 9)) * 0.024 : 0;
   camera.position.y = bob;
   const vm = viewmodels[state.weapon];
@@ -2840,7 +3021,7 @@ function tick() {
     wheelGroup.rotation.z += dt * 0.06;
     // rolling thunder: occasional lightning, more at night
     lightningT -= dt;
-    if (lightningT <= 0) { lightningT = 18 + Math.random() * 30; flashT = 0.45; sfx('explosion'); }
+    if (lightningT <= 0) { lightningT = 18 + Math.random() * 30; flashT = 0.45; thunderSfx(); }
     state.saveT += raw;
     if (state.saveT > 10) { state.saveT = 0; saveGame(); }
     uiTick += raw;
@@ -2849,6 +3030,7 @@ function tick() {
   waterTex.offset.x += raw * 0.012; waterTex.offset.y += raw * 0.006;
   for (const c of cloudSprites) { c.position.x += raw * 2.2; if (c.position.x > 420) c.position.x = -420; }
   updateDayNight();
+  updateAmbient(raw);
   for (const m of npcMixers) m.update(raw);
   updateEffects(raw * (state.mode === 'playing' ? state.timeScale : 0));
   updateCameraFX(raw);

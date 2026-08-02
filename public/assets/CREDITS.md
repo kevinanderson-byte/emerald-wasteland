@@ -23,3 +23,4 @@ Downloaded 2026-07-31 with Kevin's approval (Tier 2 plan).
 - **AmbientCG Facade001/006/018A** (CC0): reserved for future facade pass.
 - **N8AO** (MIT, npm) ambient occlusion.
 - **Quaternius Animated Zombie Pack** (CC0, quaternius.com): Zombie.fbx + ZombieSmooth.fbx rigged zombies with Idle/Walk/Run/Bite/Crawl animations — now the Faded.
+- **Mixamo / Adobe "Scary Zombie Pack"** (Warzombie F Pedroso character + 12 mocap animations), downloaded 2026-08-01 under Kevin's own Adobe/Mixamo account per Mixamo licence terms; converted FBX->GLB with FBX2glTF (Apache-2.0).
