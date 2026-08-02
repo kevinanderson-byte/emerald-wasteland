@@ -72,6 +72,7 @@ function pbrTex(path, rx, ry, srgb) {
   return t;
 }
 const ASSETS = { models: {}, ready: false };
+let envTex = null;
 const envMats = [];
 function collectEnvMats(root) {
   root.traverse(o => {
@@ -82,21 +83,13 @@ function collectEnvMats(root) {
   });
 }
 const assetsPromise = (async () => {
-  const env = await new RGBELoader().loadAsync('assets/hdri/kloofendal_overcast_2k.hdr');
+  const env = await new RGBELoader().loadAsync('assets/hdri/kloofendal_48d_partly_cloudy_puresky_2k.hdr');
   env.mapping = THREE.EquirectangularReflectionMapping;
   scene.environment = env;
-  const loader = new GLTFLoader();
-  let loaded = 0;
-  const names = ['Skeleton_Minion', 'Skeleton_Rogue', 'Skeleton_Mage', 'Skeleton_Warrior', 'Rogue_Hooded', 'Barbarian', 'Knight'];
-  const progressEl = document.getElementById('loadProgress');
-  await Promise.all(names.map(async n => {
-    ASSETS.models[n] = await loader.loadAsync(`assets/models/${n}.glb`);
-    loaded++;
-    if (progressEl) progressEl.textContent = `LOADING WORLD… ${loaded}/${names.length}`;
-  }));
+  envTex = env;
   ASSETS.ready = true;
+  const progressEl = document.getElementById('loadProgress');
   if (progressEl) progressEl.textContent = 'READY';
-  buildNpcVisuals();
   collectEnvMats(scene);
 })();
 assetsPromise.catch(e => console.error('asset load failed', e));
@@ -451,7 +444,7 @@ for (let gx = -300; gx < 300; gx += 60) {
     if (Math.hypot(cx - OUTPOST.x, cz - OUTPOST.z) < OUTPOST.r + 26) continue;
     if (Math.hypot(cx - STADIUM.x, cz - STADIUM.z) < STADIUM.r + 24) continue;
     if (Math.hypot(cx - NEEDLE.x, cz - NEEDLE.z) < 40) continue;
-    if (rng() < 0.22) continue;                                    // empty lot
+    if (rng() < 0.1) continue;                                     // empty lot
     const jx = cx + (rng() - 0.5) * 10, jz = cz + (rng() - 0.5) * 10;
     if (d.id === 'downtown') {
       const h = 22 + rng() * 46;
@@ -643,7 +636,7 @@ function addCar(x, z, rot) {
   const c = Math.abs(Math.cos(rot)), s = Math.abs(Math.sin(rot));
   addObstacleBox(x, z, 4.2 * c + 1.9 * s, 4.2 * s + 1.9 * c, 1.9);
 }
-for (let i = 0; i < 60; i++) {
+for (let i = 0; i < 100; i++) {
   const onX = rng() < 0.5;
   const lane = (Math.floor(rng() * 11) - 5) * 60 + (rng() < 0.5 ? -3 : 3);
   const along = (rng() * 2 - 1) * 320;
@@ -654,7 +647,7 @@ for (let i = 0; i < 60; i++) {
 }
 // rubble piles
 const rubbleMat = new THREE.MeshStandardMaterial({ color: 0x6b675e, roughness: 1, flatShading: true });
-for (let i = 0; i < 50; i++) {
+for (let i = 0; i < 85; i++) {
   const x = (rng() * 2 - 1) * 330, z = (rng() * 2 - 1) * 330;
   if (x < WATER_X + 4 || Math.hypot(x - OUTPOST.x, z - OUTPOST.z) < OUTPOST.r + 4) continue;
   const s = 1.5 + rng() * 3;
@@ -784,7 +777,38 @@ function nameSprite(text, color = '#9fe3b4') {
   barrel.position.set(OUTPOST.x, 0.55, OUTPOST.z); scene.add(barrel);
   addObstacleBox(OUTPOST.x, OUTPOST.z, 1.1, 1.1, 1.1);
   const fire = new THREE.PointLight(0xff8a3a, 2.2, 26); fire.position.set(OUTPOST.x, 1.6, OUTPOST.z); scene.add(fire);
-  // NPC visuals are GLB characters, created in buildNpcVisuals() once assets load
+  // NPCs
+  const dot = buildHumanoid({ shirt: 0x4e6b3f, pants: 0x3c4436, cap: 0x2e4a2e });
+  dot.g.position.set(OUTPOST.x - 8, 0, OUTPOST.z - 6); dot.g.rotation.y = 2.4;
+  const dotName = nameSprite('RANGER DOT'); dotName.position.y = 2.35; dot.g.add(dotName);
+  scene.add(dot.g); npcMeshes.push(dot);
+  const doc = buildHumanoid({ skin: 0x8a6a50, shirt: 0x8a8a92, pants: 0x44484e, hair: 0x777777, hairStyle: 'shag' });
+  doc.g.position.set(OUTPOST.x + 9, 0, OUTPOST.z + 8); doc.g.rotation.y = -2.2;
+  const docName = nameSprite('DOC MERCER'); docName.position.y = 2.35; doc.g.add(docName);
+  scene.add(doc.g); npcMeshes.push(doc);
+  const sam = buildHumanoid({ skin: 0xa88a68, shirt: 0x7a5a38, pants: 0x4a4438, hair: 0xb04a20, hairStyle: 'shag' });
+  sam.g.position.set(OUTPOST.x - 3, 0, OUTPOST.z + 12); sam.g.rotation.y = 3.0;
+  const samName = nameSprite('SALVAGE SAM'); samName.position.y = 2.35; sam.g.add(samName);
+  scene.add(sam.g); npcMeshes.push(sam);
+  // defensive clutter: sandbags + crates around the fire
+  const crateM = new THREE.MeshStandardMaterial({ color: 0x6a5233, roughness: 0.9 });
+  for (const [cx, cz, s] of [[-5, 3, 1.2], [-4.1, 3.4, 0.9], [6, -4, 1.1], [12, 2, 1.3], [-10, 8, 1.0]]) {
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), crateM);
+    crate.position.set(OUTPOST.x + cx, s / 2, OUTPOST.z + cz);
+    crate.rotation.y = (cx * 13.7) % 1;
+    crate.castShadow = crate.receiveShadow = !IS_TOUCH;
+    scene.add(crate); staticTargets.push(crate);
+    addObstacleBox(OUTPOST.x + cx, OUTPOST.z + cz, s * 1.1, s * 1.1, s);
+  }
+  const bagM = new THREE.MeshStandardMaterial({ color: 0x8a7a58, roughness: 1 });
+  for (const [bx, bz, len, rot] of [[0, -16, 7, 0.2], [-14, -6, 6, 1.4], [13, 9, 6, -0.9]]) {
+    const bags = new THREE.Mesh(new THREE.BoxGeometry(len, 1.0, 0.9), bagM);
+    bags.position.set(OUTPOST.x + bx, 0.5, OUTPOST.z + bz); bags.rotation.y = rot;
+    bags.castShadow = bags.receiveShadow = !IS_TOUCH;
+    scene.add(bags); staticTargets.push(bags);
+    const c = Math.abs(Math.cos(rot)), sn = Math.abs(Math.sin(rot));
+    addObstacleBox(OUTPOST.x + bx, OUTPOST.z + bz, len * c + 0.9 * sn, len * sn + 0.9 * c, 1.0);
+  }
   // vendor stand
   const stand = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.1, 1.2), MATS.rust);
   stand.position.set(OUTPOST.x + 9, 0.55, OUTPOST.z + 6.6); scene.add(stand);
@@ -928,9 +952,9 @@ function updateDayNight() {
   state.night = elev < -0.08;
   const dayK = Math.max(0, Math.min(1, (elev + 0.15) / 0.5));
   const duskK = Math.max(0, 1 - Math.abs(elev) / 0.3);           // 1 at horizon
-  sun.intensity = 0.1 + dayK * 2.1;
+  sun.intensity = 0.2 + dayK * 2.5;
   sun.color.setHex(0xfff2d8).lerp(new THREE.Color(0xff8a50), duskK * 0.8);
-  hemi.intensity = 0.16 + dayK * 0.95;
+  hemi.intensity = 0.16 + dayK * 0.55;
   const a = t * Math.PI * 2;
   const p = yawObj.position;
   // sun + shadow frustum follow the player so shadows exist everywhere on the map
@@ -943,15 +967,17 @@ function updateDayNight() {
   stars.position.set(p.x, 0, p.z);
   starMat.opacity = Math.max(0, -elev * 2.2 - 0.1) * 0.9;
   tmpC.copy(skyNight).lerp(skyDay, dayK).lerp(skyDusk, duskK * 0.55);
-  scene.background.copy(tmpC);
+  if (scene.background && scene.background.isColor) scene.background.copy(tmpC);
   scene.fog.color.copy(tmpC).lerp(fogNight, (1 - dayK) * 0.5);
   scene.fog.near = state.night ? 22 : 46;
   scene.fog.far = state.night ? 160 : 260;
   // window glow, streetlamps, aviation blinkers fade in after dark
   const glow = Math.max(0, Math.min(1, -elev * 5 + 0.25));
   for (const m of glowMats) m.emissiveIntensity = glow * 1.5;
-  const ei = 0.15 + dayK * 1.0;
+  const ei = 0.1 + dayK * 0.55;
   for (const m of envMats) m.envMapIntensity = ei;
+  if (envTex && dayK > 0.45) { if (scene.background !== envTex) scene.background = envTex; }
+  else if (scene.background === envTex) scene.background = new THREE.Color().copy(tmpC);
   lampHeadMat.emissiveIntensity = glow * 2.2;
   blinkerMat.emissiveIntensity = glow * (Math.sin(state.time * 2.5) > 0.4 ? 3 : 0.1);
   // storm flashes
@@ -959,7 +985,7 @@ function updateDayNight() {
     flashT -= 1 / 60;
     const f = Math.max(0, flashT) * (0.7 + Math.random() * 0.6);
     hemi.intensity += f * 2.4;
-    scene.background.lerp(new THREE.Color(0xcfd8e4), Math.min(1, f));
+    if (scene.background && scene.background.isColor) scene.background.lerp(new THREE.Color(0xcfd8e4), Math.min(1, f));
   }
 }
 
@@ -1185,88 +1211,32 @@ function pickZombieType(danger) {
   if (r < 0.45 + nightBoost + danger * 0.04) return 'sprinter';
   return 'shambler';
 }
-const ZMODEL = { shambler: 'Skeleton_Minion', sprinter: 'Skeleton_Rogue', spitter: 'Skeleton_Mage', brute: 'Skeleton_Warrior' };
-const ZMOVE = { shambler: 'Walking_D_Skeletons', sprinter: 'Running_A', spitter: 'Walking_B', brute: 'Walking_A' };
-const ZTINT = { shambler: 0x8a9878, sprinter: 0x7a8898, spitter: 0x7a9868, brute: 0x8a7462 };
-const ZMOVE_BASE = { shambler: 1.6, sprinter: 4.2, spitter: 1.4, brute: 1.3 };
-const proxyMat = new THREE.MeshBasicMaterial({ visible: false });
-const zbHeadBones = [];
-function zbSetAnim(zb, name) {
-  if (zb.animState === name) return;
-  const next = name === 'move' ? zb.moveA : zb.idleA;
-  const prev = name === 'move' ? zb.idleA : zb.moveA;
-  prev.fadeOut(0.22);
-  next.reset().fadeIn(0.22).play();
-  zb.animState = name;
-}
 function makeZombie(type, x, z, opts = {}) {
   const T = ZTYPES[type];
   const hair = HAIR_COLORS[Math.floor(Math.random() * HAIR_COLORS.length)];
-  const eyeColor = type === 'brute' ? 0xff5040 : type === 'spitter' ? 0x8aff40 : 0x9fffd0;
-  const { obj, mixer, clip } = spawnCharacter(ZMODEL[type], { tint: ZTINT[type], eyeColor });
-  const g = new THREE.Group();
-  g.add(obj);
-  // neon punk hair on the head bone (sized in bone space)
-  const headBone = obj.getObjectByName('head');
-  let hairGrp = null;
-  if (headBone) {
-    headBone.scale.setScalar(0.62);                       // de-chibi the skull
-    zbHeadBones.push(headBone);
-    const hairM = new THREE.MeshStandardMaterial({ color: hair, roughness: 0.55, emissive: hair, emissiveIntensity: 0.8 });
-    hairGrp = new THREE.Group();
-    for (let i = 0; i < 5; i++) {
-      const fin = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.24 + (2 - Math.abs(i - 2)) * 0.08, 5), hairM);
-      fin.position.set(0, (2 - Math.abs(i - 2)) * 0.02, -0.14 + i * 0.07);
-      fin.rotation.x = (i - 2) * 0.34;
-      hairGrp.add(fin);
-    }
-    g.add(hairGrp);                                        // positioned once the bone pose settles
-  }
-  g.scale.setScalar(T.scale * (0.95 + Math.random() * 0.1));
+  const hairStyle = Math.random() < 0.5 ? 'mohawk' : Math.random() < 0.7 ? 'spikes' : 'shag';
+  const shirts = [0x3a3f44, 0x4a3a52, 0x52403a, 0x2e4a44, 0x54503a];
+  const { g, parts } = buildHumanoid({
+    skin: T.skin, shirt: shirts[Math.floor(Math.random() * shirts.length)],
+    pants: 0x3a3830, hair, hairStyle, scale: T.scale * (0.95 + Math.random() * 0.1),
+    zombie: true,
+    eyeColor: type === 'brute' ? 0xff5040 : type === 'spitter' ? 0x8aff40 : 0x9fffd0,
+  });
+  parts.armL.rotation.x = -1.25;
+  parts.armR.rotation.x = -1.25;
   g.position.set(x, 0, z);
   scene.add(g);
-  // invisible raycast proxies (skinned meshes are expensive to raycast)
-  const bodyHit = new THREE.Mesh(new THREE.BoxGeometry(0.66, 1.5, 0.6), proxyMat);
-  bodyHit.position.y = 0.75; g.add(bodyHit);
-  const headHit = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.5, 0.44), proxyMat);
-  headHit.position.y = 1.66; g.add(headHit);
-  const idleA = mixer.clipAction(clip('Idle'));
-  const moveA = mixer.clipAction(clip(ZMOVE[type]) || clip('Walking_A'));
-  const attackA = mixer.clipAction(type === 'spitter' && clip('Spellcast_Shoot') ? clip('Spellcast_Shoot') : clip('Unarmed_Melee_Attack_Punch_A'));
-  attackA.setLoop(THREE.LoopOnce);
-  const deathA = mixer.clipAction(clip(Math.random() < 0.5 ? 'Death_A' : 'Death_B'));
-  deathA.setLoop(THREE.LoopOnce); deathA.clampWhenFinished = true;
   const zb = {
-    g, obj, mixer, type, idleA, moveA, attackA, deathA, headBone,
-    animState: 'idle', animLockT: 0, animBase: ZMOVE_BASE[type], riseT: 0,
-    hp: opts.hp || T.hp * (1 + (state.level - 1) * 0.06), maxHp: T.hp,
+    g, parts, type, hp: opts.hp || T.hp * (1 + (state.level - 1) * 0.06), maxHp: T.hp,
     speed: T.speed * (0.9 + Math.random() * 0.25) * (state.night ? 1.2 : 1),
     dmg: T.dmg, atkRate: T.atkRate, atkT: 1 + Math.random(),
-    dead: false, aggro: opts.aggro || false,
+    walkPhase: Math.random() * 6, dead: false, aggro: opts.aggro || false,
     growlT: Math.random() * 6, boss: opts.boss || false, name: opts.name,
   };
-  if (opts.rise && clip('Spawn_Ground_Skeletons')) {
-    const riseA = mixer.clipAction(clip('Spawn_Ground_Skeletons'));
-    riseA.setLoop(THREE.LoopOnce);
-    riseA.play();
-    zb.riseT = riseA.getClip().duration * 0.9;
-    zb.animState = 'rise';
-  } else {
-    idleA.play();
-  }
-  mixer.update(0.001);
-  if (headBone) {
-    headBone.scale.setScalar(0.62);
-    obj.updateMatrixWorld(true);
-    const hw = new THREE.Vector3();
-    headBone.getWorldPosition(hw);
-    g.worldToLocal(hw);
-    if (hairGrp) hairGrp.position.set(hw.x, hw.y + 0.42, hw.z);
-  }
   if (opts.boss) { g.scale.multiplyScalar(1.25); zb.hp = opts.hp; const ns = nameSprite(opts.name, '#ff6b5b'); ns.position.y = 2.5; g.add(ns); }
-  const hitParts = [bodyHit, headHit];
+  const hitParts = [parts.torso, parts.head, parts.legL, parts.legR, parts.armL, parts.armR];
   hitParts.forEach(m => m.userData.zombie = zb);
-  zb.hitMeshes = hitParts; zb.head = headHit;
+  zb.hitMeshes = hitParts; zb.head = parts.head;
   zombies.push(zb);
   return zb;
 }
@@ -1288,9 +1258,8 @@ function killZombie(zb) {
   state.focus = Math.min(stat.focusMax(), state.focus + 14);
   if (Math.random() < 0.3) { const amt = Math.round((2 + Math.random() * 5) * stat.lootMul()); state.tabs += amt; floater('+' + amt + ' TABS'); }
   sfx('zdie');
-  zb.idleA.fadeOut(0.08); zb.moveA.fadeOut(0.08); zb.attackA.fadeOut(0.08);
-  zb.deathA.reset().play();
-  effects.push({ obj: zb.g, life: 0, ttl: 2.0, update(dt2) { zb.mixer.update(dt2); } });
+  const g = zb.g;
+  effects.push({ obj: g, life: 0, ttl: 0.8, update(dt, k) { g.rotation.x = -k * Math.PI / 2; g.position.y = -k * 0.2; } });
   zombies.splice(zombies.indexOf(zb), 1);
   if (state.quest.stage === 1) questEvent('kill', zb);
   if (state.job && state.job.type === 'bounty') { state.job.done++; updateQuestHud(); if (state.job.done >= state.job.count) completeJobStage(); }
@@ -1326,9 +1295,6 @@ function updateZombies(dt) {
     const dx = p.x - zp.x, dz = p.z - zp.z;
     const dist = Math.hypot(dx, dz);
     if (dist > 130) { scene.remove(zb.g); zombies.splice(zombies.indexOf(zb), 1); continue; }
-    zb.mixer.update(dt);
-    if (zb.headBone) zb.headBone.scale.setScalar(0.62);
-    if (zb.riseT > 0) { zb.riseT -= dt; if (zb.riseT <= 0) { zb.animState = 'rose'; zbSetAnim(zb, 'idle'); } continue; }
     if (!zb.aggro && dist < (state.night ? 34 : 24)) zb.aggro = true;
     zb.growlT -= dt;
     if (zb.aggro && zb.growlT <= 0 && dist < 30) { zb.growlT = 4 + Math.random() * 5; sfx('growl'); }
@@ -1344,9 +1310,6 @@ function updateZombies(dt) {
       if (zb.atkT <= 0) {
         if (zb.type === 'spitter' && dist < 30) {
           zb.atkT = zb.atkRate;
-          zb.idleA.fadeOut(0.08); zb.moveA.fadeOut(0.08);
-          zb.attackA.reset().fadeIn(0.06).play();
-          zb.animState = 'attack'; zb.animLockT = 0.8;
           const from = zp.clone().setY(1.4);
           const dir = p.clone().setY(1.2).sub(from).normalize();
           const mesh = new THREE.Mesh(spitGeo, spitMat);
@@ -1357,9 +1320,8 @@ function updateZombies(dt) {
         } else if (!ZTYPES[zb.type].ranged && dist < (zb.type === 'brute' ? 2.6 : 1.9)) {
           zb.atkT = zb.atkRate;
           damagePlayer(zb.dmg + Math.floor(Math.random() * 4));
-          zb.idleA.fadeOut(0.08); zb.moveA.fadeOut(0.08);
-          zb.attackA.reset().fadeIn(0.06).play();
-          zb.animState = 'attack'; zb.animLockT = 0.7;
+          zb.parts.armR.rotation.x = -2.2;
+          setTimeout(() => { if (!zb.dead) zb.parts.armR.rotation.x = -1.25; }, 180);
         } else zb.atkT = 0.3;
       }
     } else if (Math.random() < dt * 0.4) {           // idle shuffle
@@ -1368,9 +1330,10 @@ function updateZombies(dt) {
       collideCircle(zp, 0.5);
     }
     const sp2 = Math.hypot(vx, vz);
-    if (zb.animLockT > 0) zb.animLockT -= dt;
-    else zbSetAnim(zb, sp2 > 0.3 ? 'move' : 'idle');
-    if (zb.animState === 'move') zb.moveA.timeScale = Math.max(0.55, Math.min(2.2, sp2 / zb.animBase));
+    zb.walkPhase += dt * (2 + sp2 * 2.2);
+    const swing = Math.sin(zb.walkPhase) * Math.min(0.55, 0.15 + sp2 * 0.12);
+    zb.parts.legL.rotation.x = swing;
+    zb.parts.legR.rotation.x = -swing;
   }
 }
 
@@ -1691,7 +1654,7 @@ function updateNests(dt) {
     const near = Math.hypot(yawObj.position.x - nest.x, yawObj.position.z - nest.z) < 40;
     if (nest.spawnT <= 0 && near && zombies.length < 22) {
       nest.spawnT = 7;
-      makeZombie('shambler', nest.x + (Math.random() - 0.5) * 4, nest.z + (Math.random() - 0.5) * 4, { aggro: true, rise: true });
+      makeZombie('shambler', nest.x + (Math.random() - 0.5) * 4, nest.z + (Math.random() - 0.5) * 4, { aggro: true });
     }
   }
 }
