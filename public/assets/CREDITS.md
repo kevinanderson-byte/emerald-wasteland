@@ -22,3 +22,4 @@ Downloaded 2026-07-31 with Kevin's approval (Tier 2 plan).
 - **Poly Haven models** (CC0): trashbag, old_military_crate, wooden_barrels_01, plastic_crate_01 (photoscanned props, instanced street clutter).
 - **AmbientCG Facade001/006/018A** (CC0): reserved for future facade pass.
 - **N8AO** (MIT, npm) ambient occlusion.
+- **Quaternius Animated Zombie Pack** (CC0, quaternius.com): Zombie.fbx + ZombieSmooth.fbx rigged zombies with Idle/Walk/Run/Bite/Crawl animations — now the Faded.
