@@ -10,7 +10,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
 
 /* ============================== SETUP / QUALITY ============================== */
-const IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+const IS_TOUCH = window.matchMedia ? matchMedia('(pointer: coarse)').matches : ('ontouchstart' in window);
 if (IS_TOUCH) document.body.classList.add('touch');
 
 function bootError(msg) {
@@ -2445,8 +2445,33 @@ document.addEventListener('pointerlockchange', () => {
   if (!IS_TOUCH && document.pointerLockElement !== canvas && state.mode === 'playing') showScreen('pause');
 });
 canvas.addEventListener('click', () => {
-  if (!IS_TOUCH && state.mode === 'playing' && document.pointerLockElement !== canvas) canvas.requestPointerLock();
+  if (!IS_TOUCH && state.mode === 'playing' && document.pointerLockElement !== canvas) {
+    try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+  }
 });
+// drag-to-look with the mouse when pointer lock is unavailable (embedded browsers, denied lock)
+let dragLook = null;
+canvas.addEventListener('mousedown', e => {
+  if (state.mode !== 'playing' || document.pointerLockElement === canvas) return;
+  dragLook = { x: e.clientX, y: e.clientY };
+});
+addEventListener('mousemove', e => {
+  if (!dragLook || document.pointerLockElement === canvas || state.mode !== 'playing') return;
+  yaw -= (e.clientX - dragLook.x) * 0.005;
+  pitch -= (e.clientY - dragLook.y) * 0.005;
+  pitch = Math.max(-1.45, Math.min(1.45, pitch));
+  dragLook.x = e.clientX; dragLook.y = e.clientY;
+});
+addEventListener('mouseup', () => { dragLook = null; });
+document.body.classList.add('nolock');
+document.addEventListener('pointerlockchange', () => {
+  document.body.classList.toggle('nolock', document.pointerLockElement !== canvas);
+});
+// on-screen buttons also respond to mouse (not just touch)
+el('fireBtn').addEventListener('mousedown', e => { e.preventDefault(); ensureAudio(); fireHeld = true; shoot(); });
+el('fireBtn').addEventListener('mouseup', e => { e.preventDefault(); fireHeld = false; });
+el('focusBtn').addEventListener('mousedown', e => { e.preventDefault(); toggleFocus(); });
+el('reloadBtn').addEventListener('mousedown', e => { e.preventDefault(); reload(); });
 
 /* ============================== INPUT: TOUCH ============================== */
 const joy = { id: null, baseX: 0, baseY: 0, dx: 0, dy: 0 };
