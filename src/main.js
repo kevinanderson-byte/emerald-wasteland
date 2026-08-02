@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { N8AOPass } from 'n8ao';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -46,7 +47,20 @@ scene.add(yawObj);
 
 /* post-processing: bloom makes emissives (eyes, windows, lamps, neon) actually glow */
 const composer = new EffectComposer(renderer);
-composer.addPass(new RenderPass(scene, camera));
+let aoActive = false;
+if (!IS_TOUCH) {
+  try {
+    const aoPass = new N8AOPass(scene, camera, innerWidth, innerHeight);   // replaces RenderPass
+    aoPass.configuration.aoRadius = 2.2;
+    aoPass.configuration.intensity = 2.6;
+    aoPass.configuration.distanceFalloff = 0.7;
+    aoPass.setQualityMode('Medium');
+    aoPass.configuration.gammaCorrection = false;   // OutputPass handles sRGB
+    composer.addPass(aoPass);
+    aoActive = true;
+  } catch (e) { console.warn('AO unavailable', e); }
+}
+if (!aoActive) composer.addPass(new RenderPass(scene, camera));
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), IS_TOUCH ? 0.32 : 0.42, 0.55, 0.82);
 composer.addPass(bloomPass);
 composer.addPass(new OutputPass());
@@ -87,6 +101,12 @@ const assetsPromise = (async () => {
   env.mapping = THREE.EquirectangularReflectionMapping;
   scene.environment = env;
   envTex = env;
+  try {
+    const loader = new GLTFLoader();
+    const props = await Promise.all(['trashbag', 'old_military_crate', 'wooden_barrels_01', 'plastic_crate_01']
+      .map(n => loader.loadAsync(`assets/models/props/${n}/${n}_1k.gltf`)));
+    scatterScannedProps(props);
+  } catch (e) { console.warn('prop models failed, primitive junk only', e); }
   ASSETS.ready = true;
   const progressEl = document.getElementById('loadProgress');
   if (progressEl) progressEl.textContent = 'READY';
@@ -657,8 +677,140 @@ for (let i = 0; i < 85; i++) {
   addObstacleBox(x, z, s * 1.2, s * 1.2, s * 0.8);
 }
 
+/* ============================== SURVIVOR CAMPS: tents + junk everywhere ============================== */
+{
+  const nearRoad = (x, z) => {
+    const xm = ((x % 60) + 60) % 60, zm = ((z % 60) + 60) % 60;
+    return xm < 8 || xm > 52 || zm < 8 || zm > 52;
+  };
+  const clearSpot = (x, z, r) =>
+    x > WATER_X + 6 && Math.abs(x) < MAP - 10 && Math.abs(z) < MAP - 10 &&
+    Math.hypot(x - OUTPOST.x, z - OUTPOST.z) > OUTPOST.r + 6 &&
+    Math.hypot(x - STADIUM.x, z - STADIUM.z) > STADIUM.r + 8 &&
+    !obstacles.some(o => x > o.minX - r && x < o.maxX + r && z > o.minZ - r && z < o.maxZ + r);
+
+  const tentColors = [0xa8642e, 0x5a6b3f, 0x3e5a74, 0x6e5a3a, 0x74463e, 0x4e5560];
+  const tarpColors = [0x2e5aa8, 0x3a6b4a, 0x777777];
+  function makeTent(x, z, rot) {
+    const g = new THREE.Group();
+    const mat = new THREE.MeshStandardMaterial({ color: tentColors[Math.floor(rng() * tentColors.length)], roughness: 1 });
+    const w = 2.0 + rng() * 0.8, d = 2.4 + rng() * 0.9, h = 1.4 + rng() * 0.4;
+    if (rng() < 0.7) {                     // A-frame
+      const panel = new THREE.BoxGeometry(w, 0.06, d);
+      const L = new THREE.Mesh(panel, mat);
+      L.position.set(-w * 0.25, h / 2, 0); L.rotation.z = 1.05; g.add(L);
+      const R = new THREE.Mesh(panel, mat);
+      R.position.set(w * 0.25, h / 2, 0); R.rotation.z = -1.05; g.add(R);
+      const back = new THREE.Mesh(new THREE.ConeGeometry(w * 0.42, h, 4), mat);
+      back.position.set(0, h / 2, -d / 2 + 0.1); back.rotation.y = Math.PI / 4; g.add(back);
+    } else {                               // tarp lean-to
+      const tarp = new THREE.Mesh(new THREE.BoxGeometry(w * 1.3, 0.05, d), new THREE.MeshStandardMaterial({ color: tarpColors[Math.floor(rng() * tarpColors.length)], roughness: 0.9 }));
+      tarp.position.y = h * 0.72; tarp.rotation.z = 0.5; g.add(tarp);
+      for (const px of [-w * 0.55, w * 0.55]) {
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, h, 6), MATS.dark);
+        pole.position.set(px, (h - Math.abs(px) * 0.5) / 2, d / 2 - 0.2);
+        g.add(pole);
+      }
+    }
+    g.position.set(x, 0, z); g.rotation.y = rot;
+    g.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = !IS_TOUCH; staticTargets.push(o); } });
+    scene.add(g);
+    addObstacleBox(x, z, w * 1.1, d, h);
+  }
+  function makeFireRing(x, z) {
+    const stoneM = new THREE.MeshStandardMaterial({ color: 0x777069, roughness: 1, flatShading: true });
+    for (let i = 0; i < 6; i++) {
+      const a = i / 6 * Math.PI * 2;
+      const st = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.2, 0.22), stoneM);
+      st.position.set(x + Math.cos(a) * 0.55, 0.1, z + Math.sin(a) * 0.55);
+      st.rotation.y = rng() * 3;
+      scene.add(st);
+    }
+    const coals = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.22, 7),
+      new THREE.MeshStandardMaterial({ color: 0x14100c, roughness: 1, emissive: 0xff5a1a, emissiveIntensity: rng() < 0.5 ? 0.8 : 0 }));
+    coals.position.set(x, 0.12, z);
+    scene.add(coals);
+  }
+
+  // camp clusters
+  let camps = 0, tries = 0;
+  while (camps < 20 && tries++ < 300) {
+    const cx = (rng() * 2 - 1) * 320, cz = (rng() * 2 - 1) * 320;
+    if (nearRoad(cx, cz) || !clearSpot(cx, cz, 6)) continue;
+    camps++;
+    const nTents = 2 + Math.floor(rng() * 3);
+    for (let t = 0; t < nTents; t++) {
+      const a = rng() * Math.PI * 2, r = 3 + rng() * 2.5;
+      const tx = cx + Math.cos(a) * r, tz = cz + Math.sin(a) * r;
+      if (!clearSpot(tx, tz, 1.6)) continue;
+      makeTent(tx, tz, -a + Math.PI / 2 + (rng() - 0.5) * 0.5);
+    }
+    makeFireRing(cx, cz);
+  }
+
+  // instanced loose junk scattered everywhere (cheap: 4 draw calls)
+  const dummy = new THREE.Object3D();
+  function scatterInstanced(geo, mat, count, yBase, ymul, smin, svar) {
+    const inst = new THREE.InstancedMesh(geo, mat, count);
+    let placed = 0, tr = 0;
+    while (placed < count && tr++ < count * 6) {
+      const x = (rng() * 2 - 1) * 335, z = (rng() * 2 - 1) * 335;
+      if (x < WATER_X + 4 || Math.hypot(x - OUTPOST.x, z - OUTPOST.z) < OUTPOST.r + 2) continue;
+      const s = smin + rng() * svar;
+      dummy.position.set(x, yBase * s, z);
+      dummy.rotation.set(ymul ? 0 : (rng() - 0.5) * 0.4, rng() * Math.PI * 2, ymul ? 0 : (rng() - 0.5) * 0.3);
+      dummy.scale.setScalar(s);
+      dummy.updateMatrix();
+      inst.setMatrixAt(placed++, dummy.matrix);
+    }
+    inst.count = placed;
+    inst.castShadow = !IS_TOUCH;
+    scene.add(inst);
+  }
+  scatterInstanced(new THREE.TorusGeometry(0.36, 0.14, 7, 14).rotateX(Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0x1c1c1e, roughness: 0.95 }), 60, 0.14, true, 0.8, 0.5);        // tires
+  scatterInstanced(new THREE.SphereGeometry(0.4, 7, 5).scale(1, 0.62, 1),
+    new THREE.MeshStandardMaterial({ color: 0x2a2e26, roughness: 1 }), 110, 0.25, false, 0.7, 0.7);          // trash bags
+  scatterInstanced(new THREE.BoxGeometry(0.7, 0.5, 0.55),
+    new THREE.MeshStandardMaterial({ color: 0x8a7250, roughness: 1 }), 70, 0.25, false, 0.7, 0.8);           // boxes
+  scatterInstanced(new THREE.BoxGeometry(1.2, 0.09, 1.0),
+    new THREE.MeshStandardMaterial({ color: 0x7a5c38, roughness: 1 }), 45, 0.05, false, 0.8, 0.6);           // pallets
+}
+
 /* ============================== CASCADE OUTPOST ============================== */
 const npcMeshes = [];
+function scatterScannedProps(gltfs) {
+  const dummy = new THREE.Object3D();
+  const counts = [90, 40, 34, 44];             // trashbags, crates, barrels, plastic crates
+  gltfs.forEach((gltf, gi) => {
+    gltf.scene.updateMatrixWorld(true);
+    const meshes = [];
+    gltf.scene.traverse(o => { if (o.isMesh) meshes.push(o); });
+    if (!meshes.length) return;
+    // shared placements so multi-mesh props stay assembled
+    const spots = [];
+    let tries = 0;
+    while (spots.length < counts[gi] && tries++ < counts[gi] * 8) {
+      const x = (Math.random() * 2 - 1) * 335, z = (Math.random() * 2 - 1) * 335;
+      if (x < WATER_X + 4 || Math.hypot(x - OUTPOST.x, z - OUTPOST.z) < OUTPOST.r + 2) continue;
+      spots.push([x, z, Math.random() * Math.PI * 2, 0.85 + Math.random() * 0.5]);
+    }
+    for (const m of meshes) {
+      const geo = m.geometry.clone();
+      geo.applyMatrix4(m.matrixWorld);
+      const inst = new THREE.InstancedMesh(geo, m.material, spots.length);
+      spots.forEach(([x, z, rot, s], idx) => {
+        dummy.position.set(x, 0, z);
+        dummy.rotation.set(0, rot, 0);
+        dummy.scale.setScalar(s);
+        dummy.updateMatrix();
+        inst.setMatrixAt(idx, dummy.matrix);
+      });
+      inst.castShadow = inst.receiveShadow = !IS_TOUCH;
+      scene.add(inst);
+    }
+  });
+}
 /* shared rounded-body geometry (cached — dozens of characters reuse these) */
 const BODY_GEO = {
   torso: new RoundedBoxGeometry(0.5, 0.6, 0.28, 2, 0.09),
